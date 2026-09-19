@@ -54,7 +54,6 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
 def me(user: User = Depends(get_current_user)):
     return user
 
-verify_password()
 @app.get("/users", response_model=list[UserOut])
 def users(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
     return db.query(User).order_by(User.id).all()
