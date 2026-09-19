@@ -30,6 +30,15 @@ app.add_middleware(
 def root():
     return {"name": "RouteSync API", "version": "2.0.0", "status": "online"}
 
+@app.on_event("startup")
+def seed_if_empty():
+    db = next(get_db())
+    try:
+        if db.query(User).count() == 0:
+            from app import seed  
+    finally:
+        db.close()
+
 @app.get("/health")
 def health():
     return {"status": "healthy"}
@@ -45,6 +54,7 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
 def me(user: User = Depends(get_current_user)):
     return user
 
+verify_password()
 @app.get("/users", response_model=list[UserOut])
 def users(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
     return db.query(User).order_by(User.id).all()
