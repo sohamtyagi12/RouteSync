@@ -12,10 +12,19 @@ async function request(path, options = {}) {
   const token = localStorage.getItem("routesync_token")
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) }
   if (token) headers.Authorization = `Bearer ${token}`
-  const response = await fetch(`${API}${path}`, { ...options, headers })
-  const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(data.detail || "Request failed")
-  return data
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 60000) // allow for Render cold start
+  try {
+    const response = await fetch(`${API}${path}`, { ...options, headers, signal: controller.signal })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.detail || "Request failed")
+    return data
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("Server is taking too long to respond. Please try again.")
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 const statusLabel = s => s.replaceAll("_", " ").replace(/\b\w/g, c => c.toUpperCase())
@@ -160,7 +169,7 @@ export default function App() {
   async function loadUser(){try{setUser(await request("/auth/me"))}catch{localStorage.removeItem("routesync_token");setUser(null)}finally{setChecking(false)}}
   useEffect(()=>{loadUser()},[])
   function logout(){localStorage.removeItem("routesync_token");setUser(null)}
-  if(checking) return <div className="loading-screen">Loading RouteSync...</div>
+  if(checking) return <div className="loading-screen"><div>Loading RouteSync...<br/><small style={{opacity:.6,fontWeight:400}}>Server may take up to a minute to wake up</small></div></div>
   if(!user) return <Login onLogin={loadUser}/>
   return <Shell user={user} onLogout={logout}><Routes><Route path="/" element={<Dashboard user={user}/>}/><Route path="/deliveries" element={<Deliveries user={user}/>}/><Route path="/deliveries/:id" element={<DeliveryDetail user={user}/>}/>{user.role !== "customer" && <Route path="/drivers" element={<Drivers/>}/>} {user.role === "admin" && <Route path="/assignments" element={<Assignments/>}/>}<Route path="*" element={<Navigate to="/" replace/>}/></Routes></Shell>
 }
