@@ -63,7 +63,10 @@ def run_dispatch_agent(db: Session, delivery_id: int) -> dict:
         ]
 
     def submit(data):
-        driver_id = data.get("driver_id")
+        try:
+            driver_id = int(data.get("driver_id"))  # Gemini returns JSON numbers as floats
+        except (TypeError, ValueError):
+            raise ValueError("driver_id must be an integer")
         if driver_id not in by_driver:
             raise ValueError(f"driver_id {driver_id} is not an online candidate. Choose from {sorted(by_driver)}.")
         if data.get("confidence") not in {"low", "medium", "high"}:

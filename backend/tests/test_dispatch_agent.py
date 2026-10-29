@@ -44,7 +44,8 @@ class FakeClient:
 
 
 @pytest.fixture(autouse=True)
-def seeded():
+def seeded(monkeypatch):
+    monkeypatch.setenv('AGENT_PROVIDER', 'anthropic')  # existing tests use the Claude-shaped fake
     importlib.reload(seed_module)  # idempotent; guards against other test modules cleaning up the DB
     db = SessionLocal()
     if not db.query(User).filter(User.email == 'driver2@routesync.com').first():
@@ -142,3 +143,73 @@ def test_status_endpoint(monkeypatch):
     assert client.get('/agents/status', headers=admin()).json()['configured'] is True
     monkeypatch.delenv('ANTHROPIC_API_KEY')
     assert client.get('/agents/status', headers=admin()).json()['configured'] is False
+
+
+# ------------------------------------------------------------- Gemini (free tier)
+class FakeGemini:
+    def __init__(self, script):
+        self.script = list(script)
+        self.models = self
+        self.requests = []
+
+    def generate_content(self, **kwargs):
+        self.requests.append({**kwargs, 'contents': list(kwargs['contents'])})  # snapshot
+        return self.script.pop(0)
+
+
+def gemini_reply(*calls):
+    return Block(candidates=[Block(content='model-turn')],
+                 function_calls=[Block(id=None, name=n, args=a) for n, a in calls])
+
+
+def test_gemini_happy_path_with_float_ids(monkeypatch):
+    monkeypatch.setenv('AGENT_PROVIDER', 'gemini')
+    delivery_id = new_pending_delivery()
+    chosen = sorted(driver_ids())[0]
+    fake = FakeGemini([
+        gemini_reply(('get_delivery_details', {}), ('list_driver_candidates', {})),
+        gemini_reply(('submit_proposal', {'driver_id': float(chosen), 'confidence': 'high', 'reasoning': 'Closest.'})),
+    ])
+    monkeypatch.setattr(agent_base, 'get_client', lambda: fake)
+    r = client.post(f'/agents/dispatch/{delivery_id}', headers=admin())
+    assert r.status_code == 200
+    assert r.json()['proposal']['driver_id'] == chosen          # float 1.0 coerced to int
+    sent_back = fake.requests[1]['contents'][-1]                 # tool results sent to Gemini
+    assert [p.function_response.name for p in sent_back.parts] == ['get_delivery_details', 'list_driver_candidates']
+    assert 'result' in sent_back.parts[1].function_response.response
+
+
+def test_gemini_error_is_returned_to_model(monkeypatch):
+    monkeypatch.setenv('AGENT_PROVIDER', 'gemini')
+    delivery_id = new_pending_delivery()
+    good = sorted(driver_ids())[0]
+    fake = FakeGemini([
+        gemini_reply(('submit_proposal', {'driver_id': 424242, 'confidence': 'high', 'reasoning': 'x'})),
+        gemini_reply(('submit_proposal', {'driver_id': good, 'confidence': 'low', 'reasoning': 'fixed'})),
+    ])
+    monkeypatch.setattr(agent_base, 'get_client', lambda: fake)
+    r = client.post(f'/agents/dispatch/{delivery_id}', headers=admin())
+    assert r.status_code == 200 and r.json()['proposal']['driver_id'] == good
+    assert 'error' in fake.requests[1]['contents'][-1].parts[0].function_response.response
+
+
+def test_gemini_tool_declarations_are_valid(monkeypatch):
+    monkeypatch.setenv('AGENT_PROVIDER', 'gemini')
+    delivery_id = new_pending_delivery()
+    fake = FakeGemini([gemini_reply(('submit_proposal', {'driver_id': sorted(driver_ids())[0], 'confidence': 'low', 'reasoning': 'ok'}))])
+    monkeypatch.setattr(agent_base, 'get_client', lambda: fake)
+    assert client.post(f'/agents/dispatch/{delivery_id}', headers=admin()).status_code == 200
+    declared = {d.name: d for d in fake.requests[0]['config'].tools[0].function_declarations}
+    assert declared['get_delivery_details'].parameters is None   # no-arg tools omit empty schemas
+    assert declared['submit_proposal'].parameters.required == ['driver_id', 'confidence', 'reasoning']
+
+
+def test_provider_auto_detection(monkeypatch):
+    for var in ('AGENT_PROVIDER', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'ANTHROPIC_API_KEY', 'AGENT_MODEL'):
+        monkeypatch.delenv(var, raising=False)
+    assert agent_base.provider_name() is None and not agent_base.agents_configured()
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'x')
+    assert agent_base.provider_name() == 'anthropic'
+    monkeypatch.setenv('GEMINI_API_KEY', 'y')                     # Gemini wins when both exist
+    assert agent_base.provider_name() == 'gemini'
+    assert agent_base.agent_model() == agent_base.GEMINI_DEFAULT_MODEL

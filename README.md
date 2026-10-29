@@ -83,9 +83,11 @@ Agents are LLMs with a small set of tools backed by the same code the rest of th
 | --- | --- | --- |
 | Dispatch Agent | `POST /agents/dispatch/{delivery_id}` (admin) | Reads a pending delivery and the ranked online drivers, then recommends a driver with a plain-language reason. Approving it calls the normal `POST /assignments`. |
 
-Other endpoints: `GET /agents/status` reports whether an API key is configured.
+Other endpoints: `GET /agents/status` reports whether a provider is configured.
 
-Setup: set `ANTHROPIC_API_KEY` (see `backend/.env.example`; on Render add it as an environment variable). Optionally set `AGENT_MODEL`. Without a key the API returns `503` and the rest of the app works as before. Agent tests use a scripted fake client, so they run offline.
+Setup (free): create a Gemini API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and set `GEMINI_API_KEY` (see `backend/.env.example`; on Render add it as an environment variable). Claude is also supported: set `ANTHROPIC_API_KEY` instead. The provider is auto-detected from whichever key is set (override with `AGENT_PROVIDER` / `AGENT_MODEL`). Without a key the agent endpoints return `503` and the rest of the app works as before. Agent tests use scripted fake clients, so they run offline.
+
+Note: Google may use free-tier requests to improve its models, so only use demo data with the free tier.
 
 ## Testing
 
