@@ -41,6 +41,26 @@ if not driver:
     db.add(driver)
     db.flush()
 
+extra_drivers = [
+    ("driver2@routesync.com", "Vikram Rao", "Scooter", "MH02CD5678", "online", 19.1190, 72.9050),   
+    ("driver3@routesync.com", "Neha Patil", "Bike", "MH04EF9012", "online", 19.1136, 72.8697),      
+    ("driver4@routesync.com", "Rohan Desai", "Van", "MH03GH3456", "online", 19.2183, 72.9781),      
+    ("driver5@routesync.com", "Karan Shah", "Bike", "MH01JK7890", "offline", 19.1180, 72.9070),     
+]
+
+for email, name, vehicle_type, vehicle_number, status, lat, lng in extra_drivers:
+    extra_user = user(email, name, "driver", "Driver@123")
+    if not db.query(Driver).filter(Driver.user_id == extra_user.id).first():
+        db.add(Driver(
+            user_id=extra_user.id,
+            vehicle_type=vehicle_type,
+            vehicle_number=vehicle_number,
+            status=status,
+            current_latitude=lat,
+            current_longitude=lng,
+        ))
+db.flush()
+
 if db.query(Delivery).count() == 0:
     deliveries = [
         Delivery(
