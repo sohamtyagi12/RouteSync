@@ -143,12 +143,87 @@ function Assignments() {
   const [deliveries, setDeliveries] = useState([])
   const [form, setForm] = useState({driver_id:"",delivery_id:""})
   const [message, setMessage] = useState("")
-  async function load() { const [a,d,ds]=await Promise.all([request("/assignments"),request("/drivers"),request("/deliveries?status=pending")]); setItems(a); setDrivers(d.filter(x=>x.status==="online")); setDeliveries(ds) }
-  useEffect(()=>{load()},[])
-  async function assign(e) { e.preventDefault(); setMessage(""); try { await request("/assignments",{method:"POST",body:JSON.stringify({driver_id:Number(form.driver_id),delivery_id:Number(form.delivery_id)})}); setForm({driver_id:"",delivery_id:""}); setMessage("Driver assigned successfully."); load() } catch(e){setMessage(e.message)}}
-  return <Page title="Dispatch center" subtitle="Assign available drivers and review the assignment lifecycle." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Refresh</button>}><div className="dispatch-grid"><form className="panel dispatch-form" onSubmit={assign}><div className="panel-head"><div><span className="eyebrow">MANUAL DISPATCH</span><h3>Assign a driver</h3></div><Truck size={20}/></div><label>Pending delivery<select required value={form.delivery_id} onChange={e=>setForm({...form,delivery_id:e.target.value})}><option value="">Select delivery</option>{deliveries.map(d=><option value={d.id} key={d.id}>#{d.id} · {d.pickup_address} → {d.dropoff_address}</option>)}</select></label><label>Online driver<select required value={form.driver_id} onChange={e=>setForm({...form,driver_id:e.target.value})}><option value="">Select driver</option>{drivers.map(d=><option value={d.id} key={d.id}>{d.name} · {d.vehicle_number}</option>)}</select></label><button className="primary wide">Create assignment <ArrowRight size={17}/></button>{message && <div className={message.includes("success") ? "success" : "error"}>{message}</div>}</form><section className="panel"><div className="panel-head"><div><span className="eyebrow">RECENT</span><h3>Assignment history</h3></div><Activity size={20}/></div><div className="assignment-list">{items.slice(0,8).map(a=><div className="assignment" key={a.id}><div className="assignment-icon"><Truck size={17}/></div><div><b>#{a.delivery_id} · {a.driver_name}</b><span>{a.pickup} → {a.dropoff}</span></div><span className={`badge ${a.status}`}>{statusLabel(a.status)}</span></div>)}</div></section></div></Page>
-}
+  const [ai, setAi] = useState(null)
+  const [aiBusy, setAiBusy] = useState(false)
 
+  async function load() {
+    const [a,d,ds] = await Promise.all([request("/assignments"),request("/drivers"),request("/deliveries?status=pending")])
+    setItems(a); setDrivers(d.filter(x=>x.status==="online")); setDeliveries(ds)
+  }
+  useEffect(()=>{load()},[])
+
+  async function assign(e) {
+    e.preventDefault(); setMessage("")
+    try {
+      await request("/assignments",{method:"POST",body:JSON.stringify({driver_id:Number(form.driver_id),delivery_id:Number(form.delivery_id)})})
+      setForm({driver_id:"",delivery_id:""}); setMessage("Driver assigned successfully."); load()
+    } catch(e){ setMessage(e.message) }
+  }
+
+  async function askAI() {
+    if (!form.delivery_id) { setMessage("Select a pending delivery first."); return }
+    setMessage(""); setAi(null); setAiBusy(true)
+    try { setAi(await request(`/agents/dispatch/${form.delivery_id}`,{method:"POST"})) }
+    catch(e){ setMessage(e.message) }
+    finally { setAiBusy(false) }
+  }
+
+  async function approveAI() {
+    try {
+      await request("/assignments",{method:"POST",body:JSON.stringify({driver_id:ai.proposal.driver_id,delivery_id:ai.proposal.delivery_id})})
+      setAi(null); setForm({driver_id:"",delivery_id:""}); setMessage("Driver assigned successfully."); load()
+    } catch(e){ setMessage(e.message) }
+  }
+
+  return (
+    <Page title="Dispatch center" subtitle="Assign available drivers and review the assignment lifecycle." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Refresh</button>}>
+      <div className="dispatch-grid">
+        <form className="panel dispatch-form" onSubmit={assign}>
+          <div className="panel-head"><div><span className="eyebrow">MANUAL DISPATCH</span><h3>Assign a driver</h3></div><Truck size={20}/></div>
+          <label>Pending delivery
+            <select required value={form.delivery_id} onChange={e=>{ setForm({...form,delivery_id:e.target.value}); setAi(null) }}>
+              <option value="">Select delivery</option>
+              {deliveries.map(d=><option value={d.id} key={d.id}>#{d.id} · {d.pickup_address} → {d.dropoff_address}</option>)}
+            </select>
+          </label>
+          <label>Online driver
+            <select required value={form.driver_id} onChange={e=>setForm({...form,driver_id:e.target.value})}>
+              <option value="">Select driver</option>
+              {drivers.map(d=><option value={d.id} key={d.id}>{d.name} · {d.vehicle_number}</option>)}
+            </select>
+          </label>
+          <button type="button" className="secondary wide" onClick={askAI} disabled={aiBusy}>
+            <Zap size={16}/> {aiBusy ? "AI is thinking..." : "Ask AI dispatcher"}
+          </button>
+          <button className="primary wide">Create assignment <ArrowRight size={17}/></button>
+          {message && <div className={message.includes("success") ? "success" : "error"}>{message}</div>}
+          {ai && (
+            <div className="panel" style={{marginTop:12}}>
+              <span className="eyebrow">AI RECOMMENDATION · {ai.proposal.confidence} confidence</span>
+              <h3>{ai.proposal.driver_name}</h3>
+              <p>{ai.proposal.vehicle} · {ai.proposal.distance_km} km away · {ai.proposal.active_deliveries} active deliveries</p>
+              <p>{ai.proposal.reasoning}</p>
+              <button type="button" className="primary wide" onClick={approveAI}><CheckCircle2 size={17}/> Approve and assign</button>
+              <button type="button" className="secondary wide" style={{marginTop:8}} onClick={()=>setAi(null)}>Dismiss</button>
+            </div>
+          )}
+        </form>
+        <section className="panel">
+          <div className="panel-head"><div><span className="eyebrow">RECENT</span><h3>Assignment history</h3></div><Activity size={20}/></div>
+          <div className="assignment-list">
+            {items.slice(0,8).map(a=>(
+              <div className="assignment" key={a.id}>
+                <div className="assignment-icon"><Truck size={17}/></div>
+                <div><b>#{a.delivery_id} · {a.driver_name}</b><span>{a.pickup} → {a.dropoff}</span></div>
+                <span className={`badge ${a.status}`}>{statusLabel(a.status)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </Page>
+  )
+}
 function DeliveryDetail({ user }) {
   const { id } = useParams()
   const [data,setData]=useState(null)
