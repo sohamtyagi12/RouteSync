@@ -14,13 +14,6 @@ from app.main import app
 client = TestClient(app)
 
 
-def teardown_module():
-    try:
-        TEST_DB.unlink()
-    except FileNotFoundError:
-        pass
-
-
 def token(email, password):
     response = client.post('/auth/login', json={'email': email, 'password': password})
     assert response.status_code == 200
