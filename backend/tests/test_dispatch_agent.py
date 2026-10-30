@@ -213,3 +213,62 @@ def test_provider_auto_detection(monkeypatch):
     monkeypatch.setenv('GEMINI_API_KEY', 'y')                     # Gemini wins when both exist
     assert agent_base.provider_name() == 'gemini'
     assert agent_base.agent_model() == agent_base.GEMINI_DEFAULT_MODEL
+
+
+# ---- Delivery Intake Agent endpoint ----
+def customer_headers():
+    return auth('customer@routesync.com', 'Customer@123')
+
+
+def driver_headers():
+    return auth('driver@routesync.com', 'Driver@123')
+
+
+def delivery_count():
+    return len(client.get('/deliveries', headers=admin()).json())
+
+
+def intake_script():
+    return [reply(tool_call('i1', 'submit_draft', pickup_place='Powai', dropoff_place='Thane',
+                            package_description='Documents', priority='urgent'))]
+
+
+def test_intake_endpoint_returns_a_draft_for_a_customer(monkeypatch):
+    fake = FakeClient(intake_script())
+    monkeypatch.setattr(agent_base, 'get_client', lambda: fake)
+    r = client.post('/agents/intake', headers=customer_headers(),
+                    json={'text': 'Documents from Powai to Thane, urgent'})
+    assert r.status_code == 200
+    draft = r.json()['draft']
+    assert draft['pickup_address'] == 'Powai, Mumbai'
+    assert draft['dropoff_address'] == 'Thane West'
+    assert draft['priority'] == 'urgent'
+
+
+def test_intake_endpoint_creates_nothing(monkeypatch):
+    before = delivery_count()
+    fake = FakeClient(intake_script())
+    monkeypatch.setattr(agent_base, 'get_client', lambda: fake)
+    r = client.post('/agents/intake', headers=customer_headers(),
+                    json={'text': 'Documents from Powai to Thane, urgent'})
+    assert r.status_code == 200
+    assert delivery_count() == before  # a draft is not a delivery
+
+
+def test_intake_endpoint_is_closed_to_drivers(monkeypatch):
+    fake = FakeClient(intake_script())
+    monkeypatch.setattr(agent_base, 'get_client', lambda: fake)
+    r = client.post('/agents/intake', headers=driver_headers(), json={'text': 'Documents from Powai to Thane'})
+    assert r.status_code == 403
+    assert len(fake.requests) == 0  # the AI was never called
+
+
+def test_intake_endpoint_needs_a_login():
+    r = client.post('/agents/intake', json={'text': 'Documents from Powai to Thane'})
+    assert r.status_code in (401, 403)
+
+
+@pytest.mark.parametrize('text', ['   ', 'x' * 501])
+def test_intake_endpoint_rejects_empty_and_overlong_text(text):
+    r = client.post('/agents/intake', headers=customer_headers(), json={'text': text})
+    assert r.status_code == 400
