@@ -8,7 +8,9 @@ from app.auth import create_token, get_current_user, require_roles, verify_passw
 from app.database import Base, engine, get_db
 from app.models.models import Assignment, Delivery, DeliveryEvent, Driver, User
 from app.schemas.schemas import AssignmentAction, AssignmentCreate, DeliveryCreate, DeliveryOut, DriverOut, LocationUpdate, LoginRequest, RouteOptimizeRequest, RouteOptimizeOut, RouteStopOut, Token, UserOut
-from app.utils import haversine_km, optimize_stops
+from app.utils import driver_out, haversine_km, optimize_stops
+from app.services.dispatch import rank_drivers
+from app.agents.router import router as agents_router
 
 Base.metadata.create_all(bind=engine)
 
@@ -26,6 +28,8 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+app.include_router(agents_router)
+
 @app.get("/")
 def root():
     return {"name": "RouteSync API", "version": "2.0.0", "status": "online"}
@@ -34,8 +38,8 @@ def root():
 def seed_if_empty():
     db = next(get_db())
     try:
-        if db.query(User).count() == 0:
-            from app import seed  
+        if db.query(User).count() == 0 or not db.query(User).filter(User.email == "driver2@routesync.com").first():
+            from app import seed
     finally:
         db.close()
 
@@ -57,20 +61,6 @@ def me(user: User = Depends(get_current_user)):
 @app.get("/users", response_model=list[UserOut])
 def users(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
     return db.query(User).order_by(User.id).all()
-
-def driver_out(driver):
-    return {
-        "id": driver.id,
-        "user_id": driver.user_id,
-        "name": driver.user.name,
-        "email": driver.user.email,
-        "vehicle_type": driver.vehicle_type,
-        "vehicle_number": driver.vehicle_number,
-        "status": driver.status,
-        "current_latitude": driver.current_latitude,
-        "current_longitude": driver.current_longitude,
-        "updated_at": driver.updated_at
-    }
 
 @app.get("/drivers", response_model=list[DriverOut])
 def drivers(search: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
@@ -261,22 +251,7 @@ def recommend_driver(delivery_id: int, db: Session = Depends(get_db), user: User
     delivery = db.get(Delivery, delivery_id)
     if not delivery:
         raise HTTPException(status_code=404, detail="Delivery not found")
-    drivers = db.query(Driver).filter(Driver.status == "online").all()
-    candidates = []
-    for driver in drivers:
-        active_count = db.query(func.count(Assignment.id)).filter(
-            Assignment.driver_id == driver.id,
-            Assignment.status.in_(["assigned", "accepted"])
-        ).scalar()
-        distance = haversine_km(driver.current_latitude, driver.current_longitude, delivery.pickup_latitude, delivery.pickup_longitude)
-        score = distance + active_count * 3 + (0 if driver.vehicle_type.lower() in {"bike", "van"} else 2)
-        candidates.append({
-            "driver": driver_out(driver),
-            "distance_km": round(distance, 2),
-            "active_deliveries": active_count,
-            "dispatch_score": round(score, 2)
-        })
-    return sorted(candidates, key=lambda x: x["dispatch_score"])
+    return rank_drivers(db, delivery)
 
 @app.post("/routes/optimize", response_model=RouteOptimizeOut)
 def optimize_route(data: RouteOptimizeRequest, user: User = Depends(get_current_user)):

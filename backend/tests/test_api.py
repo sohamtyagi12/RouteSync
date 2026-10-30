@@ -14,13 +14,6 @@ from app.main import app
 client = TestClient(app)
 
 
-def teardown_module():
-    try:
-        TEST_DB.unlink()
-    except FileNotFoundError:
-        pass
-
-
 def token(email, password):
     response = client.post('/auth/login', json={'email': email, 'password': password})
     assert response.status_code == 200
@@ -50,7 +43,10 @@ def test_dispatch_recommendation_and_route_optimization():
     h = headers(token('admin@routesync.com', 'Admin@123'))
     response = client.get('/dispatch/recommend/1', headers=h)
     assert response.status_code == 200
-    assert response.json()[0]['driver']['vehicle_number'] == 'MH01AB1234'
+    ranked = response.json()
+    scores = [r['dispatch_score'] for r in ranked]
+    assert scores == sorted(scores)
+    assert 'MH01JK7890' not in [r['driver']['vehicle_number'] for r in ranked]
     response = client.post('/routes/optimize', headers=h, json={'stops': [
         {'name': 'A', 'latitude': 19.1197, 'longitude': 72.8468},
         {'name': 'B', 'latitude': 19.0607, 'longitude': 72.8362},

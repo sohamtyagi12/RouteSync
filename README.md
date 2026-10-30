@@ -16,6 +16,7 @@ RouteSync is a full-stack delivery operations and route management platform.
 - Route optimization for multiple stops
 - Operations dashboard with live API-backed KPIs
 - Search, filters, details, and activity timelines
+- AI agents (tool-using LLM agents that call the platform's own logic; humans approve every action) — see [AI agents](#ai-agents)
 
 ## Stack
 
@@ -73,6 +74,20 @@ To reseed:
 cd backend
 python -m app.seed
 ```
+
+## AI agents
+
+Agents are LLMs with a small set of tools backed by the same code the rest of the app uses. They are **read-only and propose, humans approve**: an agent never changes data by itself.
+
+| Agent | Endpoint | What it does |
+| --- | --- | --- |
+| Dispatch Agent | `POST /agents/dispatch/{delivery_id}` (admin) | Reads a pending delivery and the ranked online drivers, then recommends a driver with a plain-language reason. Approving it calls the normal `POST /assignments`. |
+
+Other endpoints: `GET /agents/status` reports whether a provider is configured.
+
+Setup (free): create a Gemini API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and set `GEMINI_API_KEY` (see `backend/.env.example`; on Render add it as an environment variable). Claude is also supported: set `ANTHROPIC_API_KEY` instead. The provider is auto-detected from whichever key is set (override with `AGENT_PROVIDER` / `AGENT_MODEL`). Without a key the agent endpoints return `503` and the rest of the app works as before. Agent tests use scripted fake clients, so they run offline.
+
+Note: Google may use free-tier requests to improve its models, so only use demo data with the free tier.
 
 ## Testing
 

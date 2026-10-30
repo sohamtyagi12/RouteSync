@@ -106,23 +106,49 @@ function Page({ title, subtitle, action, children }) {
   return <section className="page"><div className="page-head"><div><span className="eyebrow">ROUTESYNC</span><h2>{title}</h2><p>{subtitle}</p></div>{action}</div>{children}</section>
 }
 
+function IntakeBox({ onDraft }) {
+  const [text, setText] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  const [note, setNote] = useState("")
+  async function submit(e) {
+    e.preventDefault()
+    setError(""); setNote(""); setBusy(true)
+    try {
+      const r = await request("/agents/intake", { method: "POST", body: JSON.stringify({ text }) })
+      if (r.draft) { setNote(r.assumptions ? `AI assumed: ${r.assumptions}` : ""); onDraft(r.draft) }
+      else setNote(r.clarification || "Please add more detail.")
+    } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
+  return <div>
+    <form className="toolbar" onSubmit={submit}>
+      <div className="search"><Zap size={17}/><input placeholder='Describe a delivery, e.g. "Urgent documents from Powai to Thane"' value={text} onChange={e => setText(e.target.value)} maxLength={500}/></div>
+      <button className="secondary" disabled={busy || !text.trim()}>{busy ? "AI is thinking..." : "Fill with AI"}</button>
+    </form>
+    {error && <div className="error">{error}</div>}
+    {note && <div className="success">{note}</div>}
+  </div>
+}
+
 function Deliveries({ user }) {
   const [items, setItems] = useState([])
   const [search, setSearch] = useState("")
   const [status, setStatus] = useState("")
   const [showCreate, setShowCreate] = useState(false)
+  const [draft, setDraft] = useState(null)
   const [loading, setLoading] = useState(false)
   async function load() { setLoading(true); try { setItems(await request(`/deliveries?search=${encodeURIComponent(search)}${status ? `&status=${status}` : ""}`)) } finally { setLoading(false) } }
   useEffect(() => { load() }, [status])
   return <Page title={user.role === "customer" ? "My deliveries" : "Delivery operations"} subtitle="Create, search and monitor delivery orders through their full lifecycle." action={user.role !== "driver" && <button className="primary" onClick={() => setShowCreate(true)}><Plus size={17}/> New delivery</button>}>
+    {user.role !== "driver" && <IntakeBox onDraft={d => { setDraft(d); setShowCreate(true) }}/>}
     <div className="toolbar"><div className="search"><Search size={17}/><input placeholder="Search pickup, drop-off or package..." value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === "Enter" && load()}/></div><select value={status} onChange={e => setStatus(e.target.value)}><option value="">All statuses</option>{["pending","assigned","accepted","pickup_started","picked_up","in_transit","delivered"].map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}</select><button className="secondary" onClick={load}><RefreshCw size={16}/>{loading ? "Loading" : "Refresh"}</button></div>
     <div className="table-wrap"><table><thead><tr><th>ID</th><th>Route</th><th>Package</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody>{items.map(d => <tr key={d.id}><td>#{d.id}</td><td><b>{d.pickup_address}</b><small className="muted">to {d.dropoff_address}</small></td><td>{d.package_description}<small className="muted">{d.package_weight} kg</small></td><td><span className={`badge ${d.priority}`}>{d.priority}</span></td><td><span className={`badge ${d.status}`}>{statusLabel(d.status)}</span></td><td><NavLink className="icon-link" to={`/deliveries/${d.id}`}><ArrowRight size={17}/></NavLink></td></tr>)}</tbody></table>{!items.length && <div className="empty">No deliveries found.</div>}</div>
-    {showCreate && <CreateDelivery onClose={() => setShowCreate(false)} onCreated={load}/>}
+    {showCreate && <CreateDelivery key={draft ? JSON.stringify(draft) : "blank"} initial={draft} onClose={() => { setShowCreate(false); setDraft(null) }} onCreated={load}/>}
   </Page>
 }
 
-function CreateDelivery({ onClose, onCreated }) {
-  const [form, setForm] = useState({ pickup_address:"Andheri East, Mumbai", pickup_latitude:19.1197, pickup_longitude:72.8468, dropoff_address:"Bandra West, Mumbai", dropoff_latitude:19.0607, dropoff_longitude:72.8362, package_description:"Documents", package_weight:1, priority:"normal" })
+function CreateDelivery({ onClose, onCreated, initial }) {
+  const [form, setForm] = useState({ pickup_address:"Andheri East, Mumbai", pickup_latitude:19.1197, pickup_longitude:72.8468, dropoff_address:"Bandra West, Mumbai", dropoff_latitude:19.0607, dropoff_longitude:72.8362, package_description:"Documents", package_weight:1, priority:"normal", ...(initial || {}) })
   const [error, setError] = useState("")
   const update = (k, v) => setForm(x => ({...x, [k]: v}))
   async function submit(e) { e.preventDefault(); try { await request("/deliveries",{method:"POST",body:JSON.stringify({...form,pickup_latitude:Number(form.pickup_latitude),pickup_longitude:Number(form.pickup_longitude),dropoff_latitude:Number(form.dropoff_latitude),dropoff_longitude:Number(form.dropoff_longitude),package_weight:Number(form.package_weight)})}); onCreated(); onClose() } catch(e) { setError(e.message) } }
@@ -143,12 +169,87 @@ function Assignments() {
   const [deliveries, setDeliveries] = useState([])
   const [form, setForm] = useState({driver_id:"",delivery_id:""})
   const [message, setMessage] = useState("")
-  async function load() { const [a,d,ds]=await Promise.all([request("/assignments"),request("/drivers"),request("/deliveries?status=pending")]); setItems(a); setDrivers(d.filter(x=>x.status==="online")); setDeliveries(ds) }
-  useEffect(()=>{load()},[])
-  async function assign(e) { e.preventDefault(); setMessage(""); try { await request("/assignments",{method:"POST",body:JSON.stringify({driver_id:Number(form.driver_id),delivery_id:Number(form.delivery_id)})}); setForm({driver_id:"",delivery_id:""}); setMessage("Driver assigned successfully."); load() } catch(e){setMessage(e.message)}}
-  return <Page title="Dispatch center" subtitle="Assign available drivers and review the assignment lifecycle." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Refresh</button>}><div className="dispatch-grid"><form className="panel dispatch-form" onSubmit={assign}><div className="panel-head"><div><span className="eyebrow">MANUAL DISPATCH</span><h3>Assign a driver</h3></div><Truck size={20}/></div><label>Pending delivery<select required value={form.delivery_id} onChange={e=>setForm({...form,delivery_id:e.target.value})}><option value="">Select delivery</option>{deliveries.map(d=><option value={d.id} key={d.id}>#{d.id} · {d.pickup_address} → {d.dropoff_address}</option>)}</select></label><label>Online driver<select required value={form.driver_id} onChange={e=>setForm({...form,driver_id:e.target.value})}><option value="">Select driver</option>{drivers.map(d=><option value={d.id} key={d.id}>{d.name} · {d.vehicle_number}</option>)}</select></label><button className="primary wide">Create assignment <ArrowRight size={17}/></button>{message && <div className={message.includes("success") ? "success" : "error"}>{message}</div>}</form><section className="panel"><div className="panel-head"><div><span className="eyebrow">RECENT</span><h3>Assignment history</h3></div><Activity size={20}/></div><div className="assignment-list">{items.slice(0,8).map(a=><div className="assignment" key={a.id}><div className="assignment-icon"><Truck size={17}/></div><div><b>#{a.delivery_id} · {a.driver_name}</b><span>{a.pickup} → {a.dropoff}</span></div><span className={`badge ${a.status}`}>{statusLabel(a.status)}</span></div>)}</div></section></div></Page>
-}
+  const [ai, setAi] = useState(null)
+  const [aiBusy, setAiBusy] = useState(false)
 
+  async function load() {
+    const [a,d,ds] = await Promise.all([request("/assignments"),request("/drivers"),request("/deliveries?status=pending")])
+    setItems(a); setDrivers(d.filter(x=>x.status==="online")); setDeliveries(ds)
+  }
+  useEffect(()=>{load()},[])
+
+  async function assign(e) {
+    e.preventDefault(); setMessage("")
+    try {
+      await request("/assignments",{method:"POST",body:JSON.stringify({driver_id:Number(form.driver_id),delivery_id:Number(form.delivery_id)})})
+      setForm({driver_id:"",delivery_id:""}); setMessage("Driver assigned successfully."); load()
+    } catch(e){ setMessage(e.message) }
+  }
+
+  async function askAI() {
+    if (!form.delivery_id) { setMessage("Select a pending delivery first."); return }
+    setMessage(""); setAi(null); setAiBusy(true)
+    try { setAi(await request(`/agents/dispatch/${form.delivery_id}`,{method:"POST"})) }
+    catch(e){ setMessage(e.message) }
+    finally { setAiBusy(false) }
+  }
+
+  async function approveAI() {
+    try {
+      await request("/assignments",{method:"POST",body:JSON.stringify({driver_id:ai.proposal.driver_id,delivery_id:ai.proposal.delivery_id})})
+      setAi(null); setForm({driver_id:"",delivery_id:""}); setMessage("Driver assigned successfully."); load()
+    } catch(e){ setMessage(e.message) }
+  }
+
+  return (
+    <Page title="Dispatch center" subtitle="Assign available drivers and review the assignment lifecycle." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Refresh</button>}>
+      <div className="dispatch-grid">
+        <form className="panel dispatch-form" onSubmit={assign}>
+          <div className="panel-head"><div><span className="eyebrow">MANUAL DISPATCH</span><h3>Assign a driver</h3></div><Truck size={20}/></div>
+          <label>Pending delivery
+            <select required value={form.delivery_id} onChange={e=>{ setForm({...form,delivery_id:e.target.value}); setAi(null) }}>
+              <option value="">Select delivery</option>
+              {deliveries.map(d=><option value={d.id} key={d.id}>#{d.id} · {d.pickup_address} → {d.dropoff_address}</option>)}
+            </select>
+          </label>
+          <label>Online driver
+            <select required value={form.driver_id} onChange={e=>setForm({...form,driver_id:e.target.value})}>
+              <option value="">Select driver</option>
+              {drivers.map(d=><option value={d.id} key={d.id}>{d.name} · {d.vehicle_number}</option>)}
+            </select>
+          </label>
+          <button type="button" className="secondary wide" onClick={askAI} disabled={aiBusy}>
+            <Zap size={16}/> {aiBusy ? "AI is thinking..." : "Ask AI dispatcher"}
+          </button>
+          <button className="primary wide">Create assignment <ArrowRight size={17}/></button>
+          {message && <div className={message.includes("success") ? "success" : "error"}>{message}</div>}
+          {ai && (
+            <div className="panel" style={{marginTop:12}}>
+              <span className="eyebrow">AI RECOMMENDATION · {ai.proposal.confidence} confidence</span>
+              <h3>{ai.proposal.driver_name}</h3>
+              <p>{ai.proposal.vehicle} · {ai.proposal.distance_km} km away · {ai.proposal.active_deliveries} active deliveries</p>
+              <p>{ai.proposal.reasoning}</p>
+              <button type="button" className="primary wide" onClick={approveAI}><CheckCircle2 size={17}/> Approve and assign</button>
+              <button type="button" className="secondary wide" style={{marginTop:8}} onClick={()=>setAi(null)}>Dismiss</button>
+            </div>
+          )}
+        </form>
+        <section className="panel">
+          <div className="panel-head"><div><span className="eyebrow">RECENT</span><h3>Assignment history</h3></div><Activity size={20}/></div>
+          <div className="assignment-list">
+            {items.slice(0,8).map(a=>(
+              <div className="assignment" key={a.id}>
+                <div className="assignment-icon"><Truck size={17}/></div>
+                <div><b>#{a.delivery_id} · {a.driver_name}</b><span>{a.pickup} → {a.dropoff}</span></div>
+                <span className={`badge ${a.status}`}>{statusLabel(a.status)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </Page>
+  )
+}
 function DeliveryDetail({ user }) {
   const { id } = useParams()
   const [data,setData]=useState(null)

@@ -22,3 +22,17 @@ def optimize_stops(stops):
         ordered.append(nxt)
         remaining.remove(nxt)
     return ordered
+
+def driver_out(driver):
+    return {
+        "id": driver.id,
+        "user_id": driver.user_id,
+        "name": driver.user.name,
+        "email": driver.user.email,
+        "vehicle_type": driver.vehicle_type,
+        "vehicle_number": driver.vehicle_number,
+        "status": driver.status,
+        "current_latitude": driver.current_latitude,
+        "current_longitude": driver.current_longitude,
+        "updated_at": driver.updated_at
+    }
