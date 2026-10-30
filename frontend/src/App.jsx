@@ -106,23 +106,49 @@ function Page({ title, subtitle, action, children }) {
   return <section className="page"><div className="page-head"><div><span className="eyebrow">ROUTESYNC</span><h2>{title}</h2><p>{subtitle}</p></div>{action}</div>{children}</section>
 }
 
+function IntakeBox({ onDraft }) {
+  const [text, setText] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  const [note, setNote] = useState("")
+  async function submit(e) {
+    e.preventDefault()
+    setError(""); setNote(""); setBusy(true)
+    try {
+      const r = await request("/agents/intake", { method: "POST", body: JSON.stringify({ text }) })
+      if (r.draft) { setNote(r.assumptions ? `AI assumed: ${r.assumptions}` : ""); onDraft(r.draft) }
+      else setNote(r.clarification || "Please add more detail.")
+    } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
+  return <div>
+    <form className="toolbar" onSubmit={submit}>
+      <div className="search"><Zap size={17}/><input placeholder='Describe a delivery, e.g. "Urgent documents from Powai to Thane"' value={text} onChange={e => setText(e.target.value)} maxLength={500}/></div>
+      <button className="secondary" disabled={busy || !text.trim()}>{busy ? "AI is thinking..." : "Fill with AI"}</button>
+    </form>
+    {error && <div className="error">{error}</div>}
+    {note && <div className="success">{note}</div>}
+  </div>
+}
+
 function Deliveries({ user }) {
   const [items, setItems] = useState([])
   const [search, setSearch] = useState("")
   const [status, setStatus] = useState("")
   const [showCreate, setShowCreate] = useState(false)
+  const [draft, setDraft] = useState(null)
   const [loading, setLoading] = useState(false)
   async function load() { setLoading(true); try { setItems(await request(`/deliveries?search=${encodeURIComponent(search)}${status ? `&status=${status}` : ""}`)) } finally { setLoading(false) } }
   useEffect(() => { load() }, [status])
   return <Page title={user.role === "customer" ? "My deliveries" : "Delivery operations"} subtitle="Create, search and monitor delivery orders through their full lifecycle." action={user.role !== "driver" && <button className="primary" onClick={() => setShowCreate(true)}><Plus size={17}/> New delivery</button>}>
+    {user.role !== "driver" && <IntakeBox onDraft={d => { setDraft(d); setShowCreate(true) }}/>}
     <div className="toolbar"><div className="search"><Search size={17}/><input placeholder="Search pickup, drop-off or package..." value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === "Enter" && load()}/></div><select value={status} onChange={e => setStatus(e.target.value)}><option value="">All statuses</option>{["pending","assigned","accepted","pickup_started","picked_up","in_transit","delivered"].map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}</select><button className="secondary" onClick={load}><RefreshCw size={16}/>{loading ? "Loading" : "Refresh"}</button></div>
     <div className="table-wrap"><table><thead><tr><th>ID</th><th>Route</th><th>Package</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody>{items.map(d => <tr key={d.id}><td>#{d.id}</td><td><b>{d.pickup_address}</b><small className="muted">to {d.dropoff_address}</small></td><td>{d.package_description}<small className="muted">{d.package_weight} kg</small></td><td><span className={`badge ${d.priority}`}>{d.priority}</span></td><td><span className={`badge ${d.status}`}>{statusLabel(d.status)}</span></td><td><NavLink className="icon-link" to={`/deliveries/${d.id}`}><ArrowRight size={17}/></NavLink></td></tr>)}</tbody></table>{!items.length && <div className="empty">No deliveries found.</div>}</div>
-    {showCreate && <CreateDelivery onClose={() => setShowCreate(false)} onCreated={load}/>}
+    {showCreate && <CreateDelivery key={draft ? JSON.stringify(draft) : "blank"} initial={draft} onClose={() => { setShowCreate(false); setDraft(null) }} onCreated={load}/>}
   </Page>
 }
 
-function CreateDelivery({ onClose, onCreated }) {
-  const [form, setForm] = useState({ pickup_address:"Andheri East, Mumbai", pickup_latitude:19.1197, pickup_longitude:72.8468, dropoff_address:"Bandra West, Mumbai", dropoff_latitude:19.0607, dropoff_longitude:72.8362, package_description:"Documents", package_weight:1, priority:"normal" })
+function CreateDelivery({ onClose, onCreated, initial }) {
+  const [form, setForm] = useState({ pickup_address:"Andheri East, Mumbai", pickup_latitude:19.1197, pickup_longitude:72.8468, dropoff_address:"Bandra West, Mumbai", dropoff_latitude:19.0607, dropoff_longitude:72.8362, package_description:"Documents", package_weight:1, priority:"normal", ...(initial || {}) })
   const [error, setError] = useState("")
   const update = (k, v) => setForm(x => ({...x, [k]: v}))
   async function submit(e) { e.preventDefault(); try { await request("/deliveries",{method:"POST",body:JSON.stringify({...form,pickup_latitude:Number(form.pickup_latitude),pickup_longitude:Number(form.pickup_longitude),dropoff_latitude:Number(form.dropoff_latitude),dropoff_longitude:Number(form.dropoff_longitude),package_weight:Number(form.package_weight)})}); onCreated(); onClose() } catch(e) { setError(e.message) } }
