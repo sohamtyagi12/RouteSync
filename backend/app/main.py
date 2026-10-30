@@ -38,8 +38,8 @@ def root():
 def seed_if_empty():
     db = next(get_db())
     try:
-        if db.query(User).count() == 0:
-            from app import seed  
+        if db.query(User).count() == 0 or not db.query(User).filter(User.email == "driver2@routesync.com").first():
+            from app import seed
     finally:
         db.close()
 
